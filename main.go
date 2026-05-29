@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	docx "github.com/khnom5000/go-read-docx"
 )
 
 var writer io.Writer = os.Stdout
+var reader io.Reader
 
 const (
 	Reset = "\033[0m"
@@ -29,29 +33,33 @@ func debug(format string, args ...interface{}) {
 	}
 }
 
-func openFile(filename string) (*os.File, error) {
+func openFile(filename string) (io.ReadCloser, error) {
 	debug("Opening file : %s", filename)
 	file, err := os.Open(filename)
 	if err != nil {
-		debug("File \"%s\" hasn`t open: %v", filename, err)
+		debug("File \"%s\" hasn't opened: %v", filename, err)
 		return nil, err
 	}
 	debug("File \"%s\" has been opened", filename)
 	return file, nil
 }
 
-func closeFile(file *os.File) error {
-	debug("Closing file : %s", file.Name())
+func closeFile(file io.ReadCloser, filename string) error {
+	debug("Closing file : %s", filename)
 	err := file.Close()
 	if err != nil {
-		debug("File \"%s\" hasn`t close: %v", file.Name(), err)
+		debug("File \"%s\" hasn't closed: %v", filename, err)
 		return err
 	}
-	debug("File \"%s\" been closed", file.Name())
+	debug("File \"%s\" has been closed", filename)
 	return nil
 }
 
-func printFile(file *os.File) error {
+func findExt(filename string) string {
+	return filepath.Ext(filename)
+}
+
+func printFile(file io.Reader) error {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		fmt.Fprintln(writer, scanner.Text())
@@ -59,7 +67,7 @@ func printFile(file *os.File) error {
 	return scanner.Err()
 }
 
-func countCharsInFile(file *os.File) error {
+func countCharsInFile(file io.Reader) error {
 	counter := 0
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -73,11 +81,12 @@ func countCharsInFile(file *os.File) error {
 	return scanner.Err()
 }
 
-func countWordsInFile(file *os.File) error {
+func countWordsInFile(file io.Reader) error {
 	counter := 0
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		counter += len(strings.Fields(scanner.Text()))
+		field := strings.Fields(strings.Trim(scanner.Text(), ".,!?;:(—)\"'-"))
+		counter += len(field)
 	}
 	if colorMode {
 		fmt.Fprintf(writer, Red+"txtstts: "+Reset+"Total words in file: "+Green+"%d"+Reset+"\n", counter)
@@ -87,12 +96,12 @@ func countWordsInFile(file *os.File) error {
 	return scanner.Err()
 }
 
-func countUniqueWordsInFile(file *os.File) error {
+func countUniqueWordsInFile(file io.Reader) error {
 	wordsMap := make(map[string]struct{})
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		for _, text := range strings.Fields(scanner.Text()) {
-			text = strings.Trim(text, ".,!?;:()\"'-")
+			text = strings.Trim(text, ".,!?;:(—)\"'-")
 			wordsMap[strings.ToLower(text)] = struct{}{}
 		}
 	}
@@ -104,7 +113,7 @@ func countUniqueWordsInFile(file *os.File) error {
 	return scanner.Err()
 }
 
-func countLineInFile(file *os.File) error {
+func countLineInFile(file io.Reader) error {
 	scanner := bufio.NewScanner(file)
 	counter := 0
 	for scanner.Scan() {
@@ -118,7 +127,7 @@ func countLineInFile(file *os.File) error {
 	return scanner.Err()
 }
 
-func countCommonWordsInFile(file *os.File, N int) error {
+func countCommonWordsInFile(file io.Reader, N int) error {
 	type WordFreq struct {
 		Word      string
 		Frequency int
@@ -128,8 +137,15 @@ func countCommonWordsInFile(file *os.File, N int) error {
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
+
 		for _, text := range strings.Fields(scanner.Text()) {
-			wordsMap[strings.Trim(text, ".,!?;:()\"'-")]++
+			cleanedWord := strings.Trim(text, ".,!?;:(—)\"'-")
+
+			if cleanedWord == "" {
+				continue
+			}
+
+			wordsMap[strings.Trim(text, ".,!?;:(—)\"'-")]++
 		}
 	}
 
@@ -140,7 +156,7 @@ func countCommonWordsInFile(file *os.File, N int) error {
 	}
 
 	sort.Slice(wordFreqSlice, func(i, j int) bool {
-		return wordFreqSlice[i].Frequency < wordFreqSlice[j].Frequency
+		return wordFreqSlice[i].Frequency > wordFreqSlice[j].Frequency
 	})
 
 	if colorMode {
@@ -149,7 +165,7 @@ func countCommonWordsInFile(file *os.File, N int) error {
 		fmt.Fprintf(writer, "txtstts: The most common words in file \n")
 	}
 
-	for i := len(wordFreqSlice) - 1; i >= len(wordFreqSlice)-N && i >= 0; i-- {
+	for i := 0; i < N; i++ {
 		if colorMode {
 			fmt.Fprintf(writer, "-%s: "+Green+"%d\n"+Reset, wordFreqSlice[i].Word, wordFreqSlice[i].Frequency)
 		} else {
@@ -171,12 +187,12 @@ func isPalindrome(word []rune) bool {
 	return true
 }
 
-func findPalindromes(file *os.File) error {
+func findPalindromes(file io.Reader) error {
 	palindromes := make(map[string]struct{})
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		for _, word := range strings.Fields(scanner.Text()) {
-			if isPalindrome([]rune(strings.Trim(strings.ToLower(word), ".,!?;:()\"'-"))) == true {
+			if isPalindrome([]rune(strings.Trim(strings.ToLower(word), ".,!?;:()—\"'-"))) == true {
 				palindromes[word] = struct{}{}
 			}
 		}
@@ -207,25 +223,26 @@ func findPalindromes(file *os.File) error {
 	return scanner.Err()
 }
 
-func withFile(file *os.File, fn func(file *os.File) error) error {
+func withFile(file io.ReadSeeker, fn func(file io.Reader) error) error {
 	err := fn(file)
 	if err != nil {
 		return err
 	}
+
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
 	return nil
 }
 
-func calculateAvgWordLen(file *os.File) error {
+func calculateAvgWordLen(file io.Reader) error {
 	lettersCounter, wordsCounter := 0, 0
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		wordsSlice := strings.Fields(scanner.Text())
 		wordsCounter += len(wordsSlice)
 		for _, text := range wordsSlice {
-			lettersCounter += utf8.RuneCountInString(strings.Trim(text, ".,!?;:()\"'-"))
+			lettersCounter += utf8.RuneCountInString(strings.Trim(text, ".,!?;:()\"'-—"))
 		}
 	}
 
@@ -246,7 +263,7 @@ func calculateAvgWordLen(file *os.File) error {
 	return scanner.Err()
 }
 
-func collectAllData(file *os.File) error {
+func collectAllData(file io.Reader) error {
 	type WordFreq struct {
 		Word      string
 		Frequency int
@@ -261,11 +278,13 @@ func collectAllData(file *os.File) error {
 		wordsCounter += len(strings.Fields(scanner.Text()))
 		linesCounter++
 		for _, text := range strings.Fields(scanner.Text()) {
-			if isPalindrome([]rune(strings.Trim(strings.ToLower(text), ".,!?;:()\"'-"))) == true {
+			if isPalindrome([]rune(strings.Trim(strings.ToLower(text), ".,!?;:()\"—'-"))) == true {
 				palindromes[text] = struct{}{}
 			}
-			wordsMap[strings.Trim(text, ".,!?;:()\"'-)")]++
-			lettersCounter += utf8.RuneCountInString(strings.Trim(text, ".,!?;:()\"'-)"))
+			if strings.Trim(text, ".,!?;:(—)\"'-)") != "" {
+				wordsMap[strings.Trim(text, ".,!?;:(—)\"'-)")]++
+			}
+			lettersCounter += utf8.RuneCountInString(strings.Trim(text, ".,!?;—:()\"'-)"))
 		}
 	}
 
@@ -373,10 +392,32 @@ func main() {
 	}
 
 	for _, filename := range files {
-		file, err := openFile(filename)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v \n", err)
-			os.Exit(1)
+		var currentSource io.ReadSeeker
+		var txtFile io.ReadCloser
+		var err error
+
+		extension := findExt(filename)
+		if extension == ".docx" {
+			doc, err := docx.GetDocument(filename)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v \n", err)
+				os.Exit(1)
+			}
+			var allText strings.Builder
+			for _, p := range doc.Body.Paragraphs {
+				allText.WriteString(p)
+				allText.WriteString("\n")
+			}
+			currentSource = strings.NewReader(allText.String())
+		}
+
+		if extension == ".txt" {
+			txtFile, err = openFile(filename)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v \n", err)
+				os.Exit(1)
+			}
+			currentSource = txtFile.(io.ReadSeeker)
 		}
 
 		if *colorFlag {
@@ -386,36 +427,36 @@ func main() {
 		}
 
 		if *printMode {
-			if err := withFile(file, printFile); err != nil {
+			if err := withFile(currentSource, printFile); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v \n", err)
 			}
 		}
 
 		if !*displayAll && (*countWordsMode || *countCharactersMode || *countLinesMode || *countUniqueWords || *commonWordsMode > 0 || *averageWordLenght || *displayPalindromes) {
 			if *countWordsMode {
-				if err := withFile(file, countWordsInFile); err != nil {
+				if err := withFile(currentSource, countWordsInFile); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v \n", err)
 				}
 			}
 			if *countLinesMode {
-				if err := withFile(file, countLineInFile); err != nil {
+				if err := withFile(currentSource, countLineInFile); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v \n", err)
 				}
 			}
 			if *countCharactersMode {
-				if err := withFile(file, countCharsInFile); err != nil {
+				if err := withFile(currentSource, countCharsInFile); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v \n", err)
 				}
 			}
 			if *countUniqueWords {
-				if err := withFile(file, countUniqueWordsInFile); err != nil {
+				if err := withFile(currentSource, countUniqueWordsInFile); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v \n", err)
 				}
 			}
 
 			if *commonWordsMode > 0 {
 				n := *commonWordsMode
-				if err := withFile(file, func(file *os.File) error {
+				if err := withFile(currentSource, func(file io.Reader) error {
 					return countCommonWordsInFile(file, n)
 				}); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v \n", err)
@@ -423,24 +464,26 @@ func main() {
 			}
 
 			if *averageWordLenght {
-				if err := withFile(file, calculateAvgWordLen); err != nil {
+				if err := withFile(currentSource, calculateAvgWordLen); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v \n", err)
 				}
 			}
 
 			if *displayPalindromes {
-				if err := withFile(file, findPalindromes); err != nil {
+				if err := withFile(currentSource, findPalindromes); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v \n", err)
 				}
 			}
 		}
 		if *displayAll {
-			if err := withFile(file, collectAllData); err != nil {
+			if err := withFile(currentSource, collectAllData); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v \n", err)
 			}
 		}
-		if err := closeFile(file); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v \n", err)
+		if extension == ".txt" && txtFile != nil {
+			if err := closeFile(txtFile, filename); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v \n", err)
+			}
 		}
 	}
 }
