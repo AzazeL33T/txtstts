@@ -85,7 +85,7 @@ func countWordsInFile(file io.Reader) error {
 	counter := 0
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		field := strings.Fields(strings.Trim(scanner.Text(), ".,!?;:_(—)\"'-"))
+		field := strings.Fields(strings.Trim(scanner.Text(), ".,!?;:_(—–)\"'-"))
 		counter += len(field)
 	}
 	if colorMode {
@@ -101,7 +101,7 @@ func countUniqueWordsInFile(file io.Reader) error {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		for _, text := range strings.Fields(scanner.Text()) {
-			text = strings.Trim(text, ".,!?;:_(—)\"'-")
+			text = strings.Trim(text, ".,!?;:_(—–)\"'-")
 			wordsMap[strings.ToLower(text)] = struct{}{}
 		}
 	}
@@ -139,13 +139,13 @@ func countCommonWordsInFile(file io.Reader, N int) error {
 	for scanner.Scan() {
 
 		for _, text := range strings.Fields(scanner.Text()) {
-			cleanedWord := strings.Trim(text, ".,!?;:_(—)\"'-")
+			cleanedWord := strings.ToLower(strings.Trim(text, ".,!?;:_(—–)\"'-"))
 
 			if cleanedWord == "" {
 				continue
 			}
 
-			wordsMap[strings.Trim(text, ".,!?;:_(—)\"'-")]++
+			wordsMap[cleanedWord]++
 		}
 	}
 
@@ -243,7 +243,7 @@ func calculateAvgWordLen(file io.Reader) error {
 		wordsSlice := strings.Fields(scanner.Text())
 		wordsCounter += len(wordsSlice)
 		for _, text := range wordsSlice {
-			lettersCounter += utf8.RuneCountInString(strings.Trim(text, ".,!?;:_(—)\"'-"))
+			lettersCounter += utf8.RuneCountInString(strings.Trim(text, ".,!?;:_(—–)\"'-"))
 		}
 	}
 
@@ -279,12 +279,12 @@ func collectAllData(file io.Reader) error {
 		wordsCounter += len(strings.Fields(scanner.Text()))
 		linesCounter++
 		for _, text := range strings.Fields(scanner.Text()) {
-			cleaned := []rune(strings.Trim(strings.ToLower(text), ".,!?;:()\"—_'-1234567890"))
+			cleaned := []rune(strings.Trim(strings.ToLower(text), ".,!?;:()\"—_'–-1234567890"))
 			if isPalindrome(cleaned) == true {
 				palindromes[string(cleaned)] = struct{}{}
 			}
-			if strings.Trim(text, ".,!?;:(—)\"'-)") != "" {
-				wordsMap[strings.Trim(text, ".,!?;:(—)\"'-)")]++
+			if string(cleaned) != "" {
+				wordsMap[string(cleaned)]++
 			}
 			lettersCounter += utf8.RuneCountInString(strings.Trim(text, ".,!?;—:()\"'-)"))
 		}
@@ -297,7 +297,7 @@ func collectAllData(file io.Reader) error {
 	}
 
 	sort.Slice(wordFreqSlice, func(i, j int) bool {
-		return wordFreqSlice[i].Frequency < wordFreqSlice[j].Frequency
+		return wordFreqSlice[i].Frequency > wordFreqSlice[j].Frequency
 	})
 
 	wordsCounterFixed := func(wordsCounter int) float32 {
@@ -316,7 +316,7 @@ func collectAllData(file io.Reader) error {
 			Red+"txtstts: "+Reset+"Average word length: "+Green+"%.1f"+Reset+"\n"+
 			Red+"txtstts: "+Reset+"Total unique words in file: "+Green+"%d"+Reset+"\n", charactersCounter, wordsCounter, linesCounter, avgWordLen, len(wordsMap))
 		fmt.Fprintf(writer, Red+"txtstts: "+Reset+"Top 5 most common words in file: \n")
-		for i := len(wordFreqSlice) - 1; i >= len(wordFreqSlice)-5 && i >= 0; i-- {
+		for i := 0; i < len(wordFreqSlice) && i <= 4; i++ {
 			if colorMode {
 				fmt.Fprintf(writer, "-%s: "+Green+"%d\n"+Reset, wordFreqSlice[i].Word, wordFreqSlice[i].Frequency)
 			}
@@ -335,7 +335,7 @@ func collectAllData(file io.Reader) error {
 			"txtstts: Total words in file: %d \n"+
 			"txtstts: Total lines in file: %d \n"+
 			"txtstts: Total unique words in file: %d \n", charactersCounter, wordsCounter, linesCounter, len(wordsMap))
-		for i := len(wordFreqSlice) - 1; i >= len(wordFreqSlice)-5 && i >= 0; i-- {
+		for i := 0; i < len(wordFreqSlice) && i <= 4; i++ {
 			fmt.Fprintf(writer, "-%s: %d\n", wordFreqSlice[i].Word, wordFreqSlice[i].Frequency)
 		}
 		if len(palindromes) > 0 {
