@@ -85,7 +85,7 @@ func countWordsInFile(file io.Reader) error {
 	counter := 0
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		field := strings.Fields(strings.Trim(scanner.Text(), ".,!?;:(—)\"'-"))
+		field := strings.Fields(strings.Trim(scanner.Text(), ".,!?;:_(—)\"'-"))
 		counter += len(field)
 	}
 	if colorMode {
@@ -101,7 +101,7 @@ func countUniqueWordsInFile(file io.Reader) error {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		for _, text := range strings.Fields(scanner.Text()) {
-			text = strings.Trim(text, ".,!?;:(—)\"'-")
+			text = strings.Trim(text, ".,!?;:_(—)\"'-")
 			wordsMap[strings.ToLower(text)] = struct{}{}
 		}
 	}
@@ -139,13 +139,13 @@ func countCommonWordsInFile(file io.Reader, N int) error {
 	for scanner.Scan() {
 
 		for _, text := range strings.Fields(scanner.Text()) {
-			cleanedWord := strings.Trim(text, ".,!?;:(—)\"'-")
+			cleanedWord := strings.Trim(text, ".,!?;:_(—)\"'-")
 
 			if cleanedWord == "" {
 				continue
 			}
 
-			wordsMap[strings.Trim(text, ".,!?;:(—)\"'-")]++
+			wordsMap[strings.Trim(text, ".,!?;:_(—)\"'-")]++
 		}
 	}
 
@@ -192,8 +192,9 @@ func findPalindromes(file io.Reader) error {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		for _, word := range strings.Fields(scanner.Text()) {
-			if isPalindrome([]rune(strings.Trim(strings.ToLower(word), ".,!?;:()—\"'-"))) == true {
-				palindromes[word] = struct{}{}
+			cleaned := []rune(strings.Trim(strings.ToLower(word), ".,!?;:_(—)\"'-1234567890"))
+			if isPalindrome(cleaned) == true {
+				palindromes[string(cleaned)] = struct{}{}
 			}
 		}
 	}
@@ -242,7 +243,7 @@ func calculateAvgWordLen(file io.Reader) error {
 		wordsSlice := strings.Fields(scanner.Text())
 		wordsCounter += len(wordsSlice)
 		for _, text := range wordsSlice {
-			lettersCounter += utf8.RuneCountInString(strings.Trim(text, ".,!?;:()\"'-—"))
+			lettersCounter += utf8.RuneCountInString(strings.Trim(text, ".,!?;:_(—)\"'-"))
 		}
 	}
 
@@ -278,8 +279,9 @@ func collectAllData(file io.Reader) error {
 		wordsCounter += len(strings.Fields(scanner.Text()))
 		linesCounter++
 		for _, text := range strings.Fields(scanner.Text()) {
-			if isPalindrome([]rune(strings.Trim(strings.ToLower(text), ".,!?;:()\"—'-"))) == true {
-				palindromes[text] = struct{}{}
+			cleaned := []rune(strings.Trim(strings.ToLower(text), ".,!?;:()\"—_'-1234567890"))
+			if isPalindrome(cleaned) == true {
+				palindromes[string(cleaned)] = struct{}{}
 			}
 			if strings.Trim(text, ".,!?;:(—)\"'-)") != "" {
 				wordsMap[strings.Trim(text, ".,!?;:(—)\"'-)")]++
