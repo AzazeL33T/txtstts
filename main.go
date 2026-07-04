@@ -23,8 +23,25 @@ const (
 	Green = "\033[32m"
 )
 
+type wordReader struct {
+	Paragraph     []string
+	CurrentIndex  int
+	CurrentBuffer *strings.Reader
+}
+
 var debugMode bool
 var colorMode bool
+
+func (doc *wordReader) Read(p []byte) (int, error) {
+	if doc.CurrentBuffer == nil || doc.CurrentBuffer.Len() == 0 {
+		if doc.CurrentIndex >= len(doc.Paragraph) {
+			return 0, io.EOF
+		}
+		doc.CurrentBuffer = strings.NewReader(doc.Paragraph[doc.CurrentIndex] + "\n")
+		doc.CurrentIndex++
+	}
+	return doc.CurrentBuffer.Read(p)
+}
 
 func debug(format string, args ...interface{}) {
 	if debugMode {
@@ -395,6 +412,7 @@ func main() {
 
 	for _, filename := range files {
 		var currentSource io.ReadSeeker
+		var tempFile *os.File
 		var txtFile io.ReadCloser
 		var err error
 
@@ -405,12 +423,23 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Error: %v \n", err)
 				os.Exit(1)
 			}
-			var allText strings.Builder
-			for _, p := range doc.Body.Paragraphs {
-				allText.WriteString(p)
-				allText.WriteString("\n")
+			reader = &wordReader{
+				Paragraph: doc.Body.Paragraphs,
 			}
-			currentSource = strings.NewReader(allText.String())
+
+			tempFile, err := os.CreateTemp("", "docx-*.txt")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating temp file: %v \n", err)
+				continue
+			}
+
+			for _, p := range doc.Body.Paragraphs {
+				tempFile.WriteString(p + "\n")
+			}
+
+			tempFile.Seek(0, io.SeekStart)
+
+			currentSource = tempFile
 		}
 
 		if extension == ".txt" {
@@ -486,6 +515,13 @@ func main() {
 			if err := closeFile(txtFile, filename); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v \n", err)
 			}
+		}
+		if tempFile != nil {
+			tempFile.Close()
+			os.Remove(tempFile.Name())
+		}
+		if txtFile != nil {
+			closeFile(txtFile, filename)
 		}
 	}
 }
