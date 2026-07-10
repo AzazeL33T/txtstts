@@ -1,7 +1,9 @@
 package main
 
 import (
+	"archive/zip"
 	"bufio"
+	"encoding/xml"
 	"flag"
 	"fmt"
 	"io"
@@ -10,12 +12,33 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
-
-	docx "github.com/khnom5000/go-read-docx"
 )
 
 var writer io.Writer = os.Stdout
 var reader io.Reader
+
+func decodeXml(file io.ReadCloser) io.ReadCloser {
+	reader, writer := io.Pipe()
+
+	go func() {
+		defer writer.Close()
+		defer file.Close()
+
+		var doc Document
+		decoder := xml.NewDecoder(file)
+		if err := decoder.Decode(&doc); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v", err)
+			return
+		}
+		for _, p := range doc.Body.Paragraphs {
+			for _, r := range p.Runs {
+				writer.Write([]byte(r.Text))
+			}
+			writer.Write([]byte("\n"))
+		}
+	}()
+	return reader
+}
 
 const (
 	Reset = "\033[0m"
@@ -23,25 +46,24 @@ const (
 	Green = "\033[32m"
 )
 
-type wordReader struct {
-	Paragraph     []string
-	CurrentIndex  int
-	CurrentBuffer *strings.Reader
+type Document struct {
+	Body Body `xml:"body"`
+}
+
+type Body struct {
+	Paragraphs []Paragraph `xml:"p"`
+}
+
+type Paragraph struct {
+	Runs []Run `xml:"r"`
+}
+
+type Run struct {
+	Text string `xml:"t"`
 }
 
 var debugMode bool
 var colorMode bool
-
-func (doc *wordReader) Read(p []byte) (int, error) {
-	if doc.CurrentBuffer == nil || doc.CurrentBuffer.Len() == 0 {
-		if doc.CurrentIndex >= len(doc.Paragraph) {
-			return 0, io.EOF
-		}
-		doc.CurrentBuffer = strings.NewReader(doc.Paragraph[doc.CurrentIndex] + "\n")
-		doc.CurrentIndex++
-	}
-	return doc.CurrentBuffer.Read(p)
-}
 
 func debug(format string, args ...interface{}) {
 	if debugMode {
@@ -418,28 +440,27 @@ func main() {
 
 		extension := findExt(filename)
 		if extension == ".docx" {
-			doc, err := docx.GetDocument(filename)
+			reader, err := zip.OpenReader(filename)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v \n", err)
-				os.Exit(1)
+				fmt.Fprintf(os.Stderr, "%v", err)
 			}
-			reader = &wordReader{
-				Paragraph: doc.Body.Paragraphs,
+			var xmlDoc *zip.File
+			for _, file := range reader.File {
+				if file.Name == "word/document.xml" {
+					xmlDoc = file
+					break
+				}
 			}
-
-			tempFile, err := os.CreateTemp("", "docx-*.txt")
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating temp file: %v \n", err)
-				continue
+			if xmlDoc != nil {
+				text, _ := xmlDoc.Open()
+				tempFile, _ = os.CreateTemp("", "docx-*.txt")
+				decodedText := decodeXml(text)
+				io.Copy(tempFile, decodedText)
+				text.Close()
+				tempFile.Seek(0, 0)
+				currentSource = tempFile
 			}
-
-			for _, p := range doc.Body.Paragraphs {
-				tempFile.WriteString(p + "\n")
-			}
-
-			tempFile.Seek(0, io.SeekStart)
-
-			currentSource = tempFile
+			reader.Close()
 		}
 
 		if extension == ".txt" {
