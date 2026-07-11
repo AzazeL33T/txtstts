@@ -106,6 +106,15 @@ func printFile(file io.Reader) error {
 	return scanner.Err()
 }
 
+func printFileOneLine(file io.Reader) error {
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		fmt.Fprint(writer, strings.TrimSpace(scanner.Text())+" ")
+	}
+	fmt.Fprintln(writer)
+	return scanner.Err()
+}
+
 func countCharsInFile(file io.Reader) error {
 	counter := 0
 	scanner := bufio.NewScanner(file)
@@ -391,6 +400,7 @@ func collectAllData(file io.Reader) error {
 
 func main() {
 	printMode := flag.Bool("print", false, "Print file")
+	oneLineMode := flag.Bool("one-line", false, "Prints file in one line")
 	countCharactersMode := flag.Bool("chars", false, "Count characters in file")
 	countWordsMode := flag.Bool("words", false, "Count words in file")
 	countLinesMode := flag.Bool("lines", false, "Count lines in file")
@@ -481,6 +491,12 @@ func main() {
 		if *printMode {
 			if err := withFile(currentSource, printFile); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v \n", err)
+			}
+		}
+
+		if *oneLineMode {
+			if err := withFile(currentSource, printFileOneLine); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v", err)
 			}
 		}
 
