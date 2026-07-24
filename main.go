@@ -3,10 +3,12 @@ package main
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
 	"encoding/xml"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -70,6 +72,98 @@ func debug(format string, args ...interface{}) {
 		fmt.Fprintf(os.Stderr, "DEBUG: "+format, args...)
 		fmt.Fprintf(os.Stderr, "\n")
 	}
+}
+
+func processDocs(read io.ReaderAt, size int64) (io.ReadSeeker, func(), error) {
+	var cleanup func()
+	var decodedText io.ReadCloser
+	reader, err := zip.NewReader(read, size)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v", err)
+		return nil, nil, err
+	}
+	var xmlDoc *zip.File
+	for _, file := range reader.File {
+		if file.Name == "word/document.xml" {
+			xmlDoc = file
+			break
+		}
+	}
+
+	if xmlDoc == nil {
+		return nil, nil, fmt.Errorf("Document not found")
+	}
+
+	text, _ := xmlDoc.Open()
+	tempFile, _ := os.CreateTemp("", "docx-*.txt")
+	decodedText = decodeXml(text)
+	io.Copy(tempFile, decodedText)
+	text.Close()
+	tempFile.Seek(0, 0)
+	cleanup = func() { tempFile.Close(); os.Remove(tempFile.Name()) }
+	return tempFile, cleanup, nil
+}
+
+func getFileType(data []byte) string {
+	return http.DetectContentType(data)
+}
+func getFileSource(filename string) (io.ReadSeeker, func(), error) {
+	var source io.ReadSeeker
+	var cleanup func() = func() {}
+	ext := filepath.Ext(filename)
+
+	if filename == "stdin" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, nil, err
+		}
+		fileType := getFileType(data)
+		if strings.Contains(fileType, "text/plain") {
+			source = bytes.NewReader(data)
+			return source, func() {}, nil
+		}
+		return processDocs(bytes.NewReader(data), int64(len(data)))
+	}
+
+	switch ext {
+	case ".docx":
+		file, err := os.Open(filename)
+		if err != nil {
+			file.Close()
+			fmt.Fprintf(writer, "Error: %v", err)
+			return nil, nil, err
+		}
+		stat, err := file.Stat()
+		if err != nil {
+			file.Close()
+			fmt.Fprintf(writer, "Error: %v", err)
+			return nil, nil, err
+		}
+
+		source, _, err := processDocs(file, stat.Size())
+		if err != nil {
+			file.Close()
+			fmt.Fprintf(writer, "Error: %v", err)
+			return nil, nil, err
+		}
+
+		newcleanup := func() {
+			cleanup()
+			file.Close()
+		}
+		return source, newcleanup, nil
+
+	case ".txt":
+		file, err := os.Open(filename)
+		if err != nil {
+			return nil, nil, err
+		}
+		source = file
+		cleanup = func() { file.Close() }
+	default:
+		return nil, nil, fmt.Errorf("Unsupported format")
+	}
+	return source, cleanup, nil
 }
 
 func openFile(filename string) (io.ReadCloser, error) {
@@ -426,13 +520,18 @@ func main() {
 		writer = file
 	}
 
-	if flag.NArg() < 1 {
+	if flag.NArg() < 0 {
 		debug("No filename provided")
 		fmt.Fprintf(os.Stderr, "Error: file name required \n")
 		os.Exit(1)
 	}
 
 	files := flag.Args()
+
+	if len(files) == 0 {
+		files = []string{"stdin"}
+		fmt.Fprintln(os.Stderr, "txtstts: Be careful - pipe operations support only one file at a time")
+	}
 
 	if *displayAll && (*countWordsMode || *countCharactersMode || *countLinesMode || *countUniqueWords || *commonWordsMode > 0 || *averageWordLenght || *displayPalindromes) {
 		fmt.Fprint(os.Stderr, Red+"Warning: "+Reset+"Individual stats flags (-chars, -words, -lines, -unique) are ignored when -all is used!\n")
@@ -443,49 +542,16 @@ func main() {
 	}
 
 	for _, filename := range files {
-		var currentSource io.ReadSeeker
-		var tempFile *os.File
-		var txtFile io.ReadCloser
-		var err error
-
-		extension := findExt(filename)
-		if extension == ".docx" {
-			reader, err := zip.OpenReader(filename)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%v", err)
-			}
-			var xmlDoc *zip.File
-			for _, file := range reader.File {
-				if file.Name == "word/document.xml" {
-					xmlDoc = file
-					break
-				}
-			}
-			if xmlDoc != nil {
-				text, _ := xmlDoc.Open()
-				tempFile, _ = os.CreateTemp("", "docx-*.txt")
-				decodedText := decodeXml(text)
-				io.Copy(tempFile, decodedText)
-				text.Close()
-				tempFile.Seek(0, 0)
-				currentSource = tempFile
-			}
-			reader.Close()
-		}
-
-		if extension == ".txt" {
-			txtFile, err = openFile(filename)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v \n", err)
-				os.Exit(1)
-			}
-			currentSource = txtFile.(io.ReadSeeker)
+		currentSource, cleanup, err := getFileSource(filename)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v", err)
+			continue
 		}
 
 		if *colorFlag {
-			fmt.Printf("\n"+Green+"========== %s ==========\n\n"+Reset, filename)
+			fmt.Fprintf(writer, "\n"+Green+"========== %s ==========\n\n"+Reset, filename)
 		} else {
-			fmt.Printf("\n========== %s ==========\n\n", filename)
+			fmt.Fprintf(writer, "\n========== %s ==========\n\n", filename)
 		}
 
 		if *printMode {
@@ -548,17 +614,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Error: %v \n", err)
 			}
 		}
-		if extension == ".txt" && txtFile != nil {
-			if err := closeFile(txtFile, filename); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v \n", err)
-			}
-		}
-		if tempFile != nil {
-			tempFile.Close()
-			os.Remove(tempFile.Name())
-		}
-		if txtFile != nil {
-			closeFile(txtFile, filename)
-		}
+
+		cleanup()
 	}
 }
