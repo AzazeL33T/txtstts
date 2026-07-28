@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -74,7 +75,7 @@ func debug(format string, args ...interface{}) {
 	}
 }
 
-func processDocs(read io.ReaderAt, size int64) (io.ReadSeeker, func(), error) {
+func processDocx(read io.ReaderAt, size int64) (io.ReadSeeker, func(), error) {
 	var cleanup func()
 	var decodedText io.ReadCloser
 	reader, err := zip.NewReader(read, size)
@@ -104,6 +105,48 @@ func processDocs(read io.ReaderAt, size int64) (io.ReadSeeker, func(), error) {
 	return tempFile, cleanup, nil
 }
 
+func closerToSeeker(r io.ReadCloser) (io.ReadSeeker, func(), error) {
+	tmpFile, _ := os.CreateTemp("", "doc-*.txt")
+	if _, err := io.Copy(tmpFile, r); err != nil {
+		return nil, nil, err
+	}
+	r.Close()
+
+	_, err := tmpFile.Seek(0, 0)
+	cleanup := func() { tmpFile.Close(); os.Remove(tmpFile.Name()) }
+	return tmpFile, cleanup, err
+}
+
+func processAntiword(r io.Reader) (io.ReadSeeker, func(), error) {
+	command := exec.Command("antiword", "-")
+
+	stdinPipe, err := command.StdinPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	stdOutPipe, err := command.StdoutPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := command.Start(); err != nil {
+		return nil, nil, err
+	}
+
+	go func() {
+		defer stdinPipe.Close()
+		io.Copy(stdinPipe, r)
+	}()
+
+	seeker, cleanup, err := closerToSeeker(stdOutPipe)
+
+	go func() {
+		command.Wait()
+	}()
+
+	return seeker, cleanup, err
+}
+
 func getFileType(data []byte) string {
 	return http.DetectContentType(data)
 }
@@ -117,12 +160,23 @@ func getFileSource(filename string) (io.ReadSeeker, func(), error) {
 		if err != nil {
 			return nil, nil, err
 		}
+
+		if len(data) > 8 && bytes.Equal(data[:8], []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}) {
+			return processAntiword(bytes.NewReader(data))
+		}
+
 		fileType := getFileType(data)
+
+		if strings.Contains(fileType, "xml") || strings.HasPrefix(fileType, "<?xml") {
+			source = bytes.NewReader(data)
+			return source, func() {}, nil
+		}
+
 		if strings.Contains(fileType, "text/plain") {
 			source = bytes.NewReader(data)
 			return source, func() {}, nil
 		}
-		return processDocs(bytes.NewReader(data), int64(len(data)))
+		return processDocx(bytes.NewReader(data), int64(len(data)))
 	}
 
 	switch ext {
@@ -140,7 +194,7 @@ func getFileSource(filename string) (io.ReadSeeker, func(), error) {
 			return nil, nil, err
 		}
 
-		source, _, err := processDocs(file, stat.Size())
+		source, _, err := processDocx(file, stat.Size())
 		if err != nil {
 			file.Close()
 			fmt.Fprintf(writer, "Error: %v", err)
@@ -152,7 +206,22 @@ func getFileSource(filename string) (io.ReadSeeker, func(), error) {
 			file.Close()
 		}
 		return source, newcleanup, nil
-
+	case ".doc":
+		file, err := os.Open(filename)
+		if err != nil {
+			return nil, nil, err
+		}
+		data, err := io.ReadAll(file)
+		if err != nil {
+			return nil, nil, err
+		}
+		return processAntiword(bytes.NewReader(data))
+	case ".xml":
+		file, err := os.Open(filename)
+		if err != nil {
+			return nil, nil, err
+		}
+		return file, func() { file.Close() }, nil
 	case ".txt":
 		file, err := os.Open(filename)
 		if err != nil {
@@ -529,8 +598,8 @@ func main() {
 	files := flag.Args()
 
 	if len(files) == 0 {
+		fmt.Fprintln(os.Stderr, "txtstts: Pipe operations support only one file at a time")
 		files = []string{"stdin"}
-		fmt.Fprintln(os.Stderr, "txtstts: Be careful - pipe operations support only one file at a time")
 	}
 
 	if *displayAll && (*countWordsMode || *countCharactersMode || *countLinesMode || *countUniqueWords || *commonWordsMode > 0 || *averageWordLenght || *displayPalindromes) {
